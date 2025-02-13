@@ -801,22 +801,33 @@ class GaussianDFTRun:
         return SpinMulti
 
     def LC_para_BOopt(self, JobName, ReadFrom, atm, X, Y, Z, TotalCharge, SpinMulti):
-        
         from bayes_opt import BayesianOptimization
         from bayes_opt import UtilityFunction
 
+        # Cache to store previously computed mu values and their corresponding results
+        cache = {}  # Format: {mu_rounded: square_diff_satkoopmans}
+
         def KTLC_BB(mu):
-            self.para_functional = [mu]
-        
-            option_dict_lcparacheck= {'homolumo': True, 'vip': True, 'vea': True,  'satkoopmans': True}
-            scf_need=True
-            self.chain_job(JobName, scf_need, option_dict_lcparacheck, TotalCharge, SpinMulti, 
-                         0, ReadFrom, 
-                         element=atm, atomX=X, atomY=Y, atomZ=Z, optoption='', TDstate_info=[])
+            nonlocal cache
+            # Round the mu value to 4 decimal places to match Gaussian 16's precision
+            mu_rounded = round(mu * 10000) / 10000  # Retain 4 decimal places
+
+            # Check if the result for this mu value is already in the cache
+            if mu_rounded in cache:
+                return cache[mu_rounded]
+
+            self.para_functional = [mu_rounded]  # Use the rounded mu value
+
+            # Original calculation flow
+            option_dict_lcparacheck = {'homolumo': True, 'vip': True, 'vea': True, 'satkoopmans': True}
+            scf_need = True
+            self.chain_job(JobName, scf_need, option_dict_lcparacheck, TotalCharge, SpinMulti,
+                           0, ReadFrom,
+                           element=atm, atomX=X, atomY=Y, atomZ=Z, optoption='', TDstate_info=[])
             job_state = "normal"
             job_state = gaussian_run.Exe_Gaussian.exe_Gaussian(JobName, self.timexe)
             gaussian_run.chk2fchk.Get_chklist(0)
-        
+
             try:
                 output_prop = self.Extract_values(JobName, option_dict_lcparacheck, Bondpair1=[], Bondpair2=[])
             except Exception as e:
@@ -838,35 +849,34 @@ class GaussianDFTRun:
             
             return square_diff_satkoopmans
 
-        pbounds = {'mu': (0,1)}
+        pbounds = {'mu': (0, 1)}
 
-        optimizer = BayesianOptimization( 
-        f=KTLC_BB,
-        pbounds=pbounds,
-        verbose=1, 
-        random_state=1,
+        optimizer = BayesianOptimization(
+            f=KTLC_BB,
+            pbounds=pbounds,
+            verbose=1,
+            random_state=1,
         )
 
-        #initial mu values 
-        init_mu = [0.15, 0.35, 0.65]
-   
-        #initial try...
-        for i in range(len(init_mu)):
-            optimizer.set_bounds(new_bounds={"mu": (init_mu[i],init_mu[i])})
-            optimizer.maximize(
-                init_points=1,
-                n_iter=0,
+        # Initial mu values directly use 4 decimal precision
+        init_mu_rounded = [0.1500, 0.3500, 0.6500]  # Ensure initial values are within the precision limit
+        for mu_init in init_mu_rounded:
+            optimizer.probe(  # Use probe to directly add known points, avoiding set_bounds
+                params={'mu': mu_init},
+                lazy=True  # Delay evaluation until maximize is called
             )
 
-        diff_koopmans = np.sqrt(abs(optimizer.max['target']))
-        optimizer.set_bounds(new_bounds={"mu": (0,1)})
+        # Run optimization with initial points evaluated first
+        optimizer.maximize(init_points=0, n_iter=0)
 
-        #Extra try...
+        # Evaluate the result of the best initial guess
+        diff_koopmans = np.sqrt(abs(optimizer.max['target']))
+
+        # Main optimization logic: check if optimization result meets the threshold
         if diff_koopmans <= 0.01:
             print("Successful parameter optimization!")
-            pass
         else:
-            i = 3 
+            i = 3
             acquisition_function = UtilityFunction(kind="ei", xi=1e-4)
             while diff_koopmans > 0.01:
                 optimizer.maximize(
@@ -877,10 +887,10 @@ class GaussianDFTRun:
                 i += 1
                 diff_koopmans = np.sqrt(abs(optimizer.max['target']))
                 if i > 51:
-                    break
+                    break  # Prevent infinite loop by limiting iterations
 
         if diff_koopmans > 0.01:
-            print("The prameter optimization failed!")
+            print("The parameter optimization failed!")
             print("The default parameter will be used!")
             return []
         else:
