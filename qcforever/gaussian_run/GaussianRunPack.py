@@ -900,10 +900,10 @@ class GaussianDFTRun:
         else:
             print("Successful parameter optimization!")
 
-            diff_koopmans = np.sqrt(abs(optimizer.max['target']))
-            print(f"Optimized mu is {optimizer.max['params']['mu']} with the difference {diff_koopmans}.")
+        diff_koopmans = np.sqrt(abs(optimizer.max['target']))
+        print(f"Optimized mu is {optimizer.max['params']['mu']} with the difference {diff_koopmans}.")
 
-            return [optimizer.max['params']['mu']]
+        return [optimizer.max['params']['mu']]
 
     def run_gaussian(self):
         infilename = self.in_file
