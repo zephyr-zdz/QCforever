@@ -889,15 +889,16 @@ class GaussianDFTRun:
                 if i > 51:
                     break  # Prevent infinite loop by limiting iterations
 
+        for i, res in enumerate(optimizer.res):
+            print(f"Iteration {i}: {res}")
+
         if diff_koopmans > 0.01:
-            print("The parameter optimization failed!")
-            print("The default parameter will be used!")
-            return []
+            # print("The parameter optimization failed!")
+            # print("The default parameter will be used!")
+            # return []
+            pass
         else:
             print("Successful parameter optimization!")
-
-            for i, res in enumerate(optimizer.res):
-                print(f"Iteration {i}: {res}")
 
             diff_koopmans = np.sqrt(abs(optimizer.max['target']))
             print(f"Optimized mu is {optimizer.max['params']['mu']} with the difference {diff_koopmans}.")
