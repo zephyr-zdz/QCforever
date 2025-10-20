@@ -893,7 +893,7 @@ class GaussianDFTRun:
         for i, res in enumerate(optimizer.res):
             print(f"Iteration {i}: {res}")
 
-        if diff_koopmans > 0.01:
+        if diff_koopmans > 0.01: # the convergence threshold is disabled
             # print("The parameter optimization failed!")
             # print("The default parameter will be used!")
             # return []
