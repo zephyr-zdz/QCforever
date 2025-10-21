@@ -44,7 +44,23 @@ def LAQA_confopt_main(infilename, TotalCharge, SpinMulti, method, nproc, mem):
 
 def make_laqa_input(SMILES, SpinMulti, TotalCharge, RotBond, method, nproc, mem):
 
-    Num_popsize = 3*RotBond
+    # Smart population sizing with bounds to handle edge cases and large molecules
+    # - Minimum of 10 to handle rigid molecules (RotBond=0)
+    # - Tiered scaling to balance exploration vs computational cost
+    # - Maximum cap to prevent excessive computation for very flexible molecules
+    if RotBond <= 3:
+        Num_popsize = 10  # Rigid/semi-rigid molecules: use default minimum
+    elif RotBond <= 10:
+        Num_popsize = min(15 + 2*RotBond, 35)  # Small-medium molecules: moderate scaling
+    elif RotBond <= 20:
+        Num_popsize = min(35 + RotBond, 55)  # Medium-large molecules: reduced scaling
+    else:
+        # Very large molecules: logarithmic scaling with cap at 70
+        import math
+        Num_popsize = min(55 + int(math.log2(RotBond - 19) * 5), 70)
+
+    print(f"Number of rotatable bonds: {RotBond}")
+    print(f"Initial population size: {Num_popsize}")
 
     input_s = ''
 
@@ -53,6 +69,10 @@ def make_laqa_input(SMILES, SpinMulti, TotalCharge, RotBond, method, nproc, mem)
 
     input_s += f'\n[Initial geometry]\n'
     input_s += f'popsize = {Num_popsize}\n'
+
+    # For large molecules, increase max iterations for structure generation
+    if RotBond > 15:
+        input_s += f'cnt_max = {min(1000, 500 + RotBond * 20)}\n'
 
     input_s += '\n[LAQA settings]\n'
 

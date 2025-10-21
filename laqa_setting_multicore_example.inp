@@ -1,0 +1,109 @@
+# LAQA Geometry Optimization Configuration File
+# Example with Multi-Core Parallelization Support
+
+[Molecule]
+smiles = "CCO"  # Your molecule SMILES
+
+[Initial geometry]
+popsize = 20  # Number of initial conformers
+
+[LAQA settings]
+
+# Input/Output files
+sdf_inp = initial_structures.sdf
+sdf_out = optimized_structures.sdf
+csv_out = optimized_structures.csv
+
+# LAQA algorithm parameters
+struct_conv = 10         # Number of converged structures to find
+macro_opt_cycle = 1000   # Maximum optimization cycles
+micro_opt_cycle = 5      # Steps per local optimization
+thr_econv = 5.0e-4       # Energy convergence threshold
+thr_fconv = 1.0e-6       # Force convergence threshold
+
+# ========================================
+# MULTI-CORE PARALLELIZATION SETTINGS (NEW!)
+# ========================================
+
+# Enable parallel initialization (default: True)
+# Set to False for debugging or single-core systems
+parallel_init = True
+
+# Number of parallel structure evaluations
+# Options:
+#   - Set to None for AUTO mode (recommended)
+#   - Set to "auto" for AUTO mode (alternative)
+#   - Set to a number for manual control
+#   AUTO mode automatically balances structure-level vs QC-level parallelism
+# n_parallel = None   # AUTO mode (recommended)
+# n_parallel = "auto" # AUTO mode (alternative)
+# n_parallel = 4      # Manual: evaluate 4 structures simultaneously
+# n_parallel = 8      # Manual: evaluate 8 structures simultaneously
+
+# ========================================
+# COMPUTATIONAL CHEMISTRY SETTINGS
+# ========================================
+
+# Energy function: xtb or g16
+energy_function = xtb
+
+# For xTB calculations
+xtb_call = xtb
+gfn = 2              # GFN method (1, 2, or ff)
+
+# For Gaussian 16 calculations (if energy_function = g16)
+# gauss_exedir = /path/to/g16/
+# gauss_scrdir = /tmp/
+# qcmethod = pm6
+
+# Molecular properties
+charge = 0
+mult = 1
+
+# Solvent (optional)
+# solvmethod = None    # No solvent
+# solvmethod = alpb    # ALPB solvation model
+# solvent = water      # Solvent name
+
+# Resource allocation
+# IMPORTANT:
+#   - If parallel_init = True and n_parallel = auto:
+#     The code will automatically distribute cores between parallel
+#     structures and QC calculations
+#   - If parallel_init = False:
+#     All nprocs cores will be used for each structure's QC calculation
+nprocs = 4           # Total cores available (will be distributed intelligently)
+memory = 4GB         # Memory per QC calculation
+
+# ========================================
+# EXAMPLE CONFIGURATIONS
+# ========================================
+
+# Configuration 1: Many structures, multi-core system (RECOMMENDED)
+# parallel_init = True
+# n_parallel = None  # or "auto"
+# nprocs = 16
+# Result: Auto-balances, e.g., 8 structures × 2 cores each
+
+# Configuration 2: Few large molecules
+# parallel_init = True
+# n_parallel = 2
+# nprocs = 16
+# Result: 2 structures × 8 cores each
+
+# Configuration 3: Sequential (original behavior)
+# parallel_init = False
+# nprocs = 8
+# Result: 1 structure × 8 cores
+
+# Configuration 4: Maximum parallelism (many small molecules)
+# parallel_init = True
+# n_parallel = 10
+# nprocs = 20
+# Result: 10 structures × 2 cores each
+
+# ========================================
+# DEBUGGING
+# ========================================
+
+printlevel = 0       # 0: normal, >0: verbose

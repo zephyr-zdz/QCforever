@@ -102,8 +102,86 @@ def create_dof_object(type_of_deg, positions):
         return laqa_fafoom.deg_of_freedom.PyranoseRing(positions)
 
 
+def generate_conformers_batch(smiles, num_conformers, distance_cutoff_1, distance_cutoff_2):
+    """Generate multiple conformers efficiently using batch processing.
+
+    This function uses RDKit's EmbedMultipleConfs for much faster generation
+    compared to sequential embedding. Particularly beneficial for large molecules.
+
+    Args:
+        smiles (str): SMILES representation of the molecule
+        num_conformers (int): Number of conformers to generate
+        distance_cutoff_1 (float): min distance between non-bonded atoms [A]
+        distance_cutoff_2 (float): max distance between bonded atoms [A]
+
+    Returns:
+        list of sdf strings: Valid conformer structures
+    """
+    from rdkit.Chem import rdMolDescriptors
+
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError(f"Invalid SMILES: {smiles}")
+
+    mol = Chem.AddHs(mol)
+    num_rot_bonds = rdMolDescriptors.CalcNumRotatableBonds(mol)
+
+    # Configure embedding parameters based on molecule size
+    params = AllChem.ETKDGv3()
+    params.randomSeed = -1  # Use different random seeds
+    params.numThreads = 0  # Use all available cores
+    params.pruneRmsThresh = 0.5 if num_rot_bonds > 5 else 0.3  # Auto-prune similar structures
+
+    # Generate more conformers than needed to account for failures
+    target_confs = int(num_conformers * 1.5)
+
+    print(f"Generating {target_confs} conformers (target: {num_conformers})...")
+
+    try:
+        # Batch generation - much faster than sequential
+        conf_ids = AllChem.EmbedMultipleConfs(
+            mol,
+            numConfs=target_confs,
+            params=params
+        )
+
+        if len(conf_ids) == 0:
+            print("Warning: Batch embedding failed, falling back to sequential method")
+            return []
+
+        print(f"Successfully embedded {len(conf_ids)} conformers")
+
+        # Batch optimization using UFF
+        print("Optimizing conformers...")
+        results = AllChem.UFFOptimizeMoleculeConfs(mol, maxIters=200, numThreads=0)
+
+        # Validate and collect valid conformers
+        valid_conformers = []
+        for i, conf_id in enumerate(conf_ids):
+            if len(valid_conformers) >= num_conformers:
+                break
+
+            try:
+                sdf_string = Chem.MolToMolBlock(mol, confId=conf_id)
+                if laqa_fafoom.utilities.check_geo_sdf(sdf_string, distance_cutoff_1, distance_cutoff_2):
+                    valid_conformers.append(sdf_string)
+            except Exception as e:
+                print(f"Warning: Conformer {i} validation failed: {e}")
+                continue
+
+        print(f"Generated {len(valid_conformers)} valid conformers")
+        return valid_conformers
+
+    except Exception as e:
+        print(f"Error in batch conformer generation: {e}")
+        return []
+
+
 def template_sdf(smiles, distance_cutoff_1, distance_cutoff_2):
     """Create a template sdf string and writes it to file.
+
+    Uses ETKDGv3 (Experimental Torsion-angle Knowledge Distance Geometry)
+    for improved performance and chemical accuracy, especially for large molecules.
 
     Args(required):
         smiles (str): one-line representation of the molecule
@@ -113,19 +191,56 @@ def template_sdf(smiles, distance_cutoff_1, distance_cutoff_2):
     Returns:
         sdf string
     """
+    from rdkit.Chem import rdMolDescriptors
+
     cnt = 0
     sdf_check = True
-    while sdf_check:
-        mol = Chem.MolFromSmiles(smiles)
-        mol = Chem.AddHs(mol)
-        AllChem.EmbedMolecule(mol,useRandomCoords=True)
-        AllChem.UFFOptimizeMolecule(mol, maxIters=1000)
-        Chem.SDWriter('mol.sdf').write(mol)
-        sdf_string = Chem.MolToMolBlock(mol)
-        check = laqa_fafoom.utilities.check_geo_sdf(sdf_string, distance_cutoff_1, distance_cutoff_2)
-        if check:
-            sdf_check = False
-            Chem.SDWriter('mol.sdf').write(mol)
-        else:
+    max_attempts = 100  # Prevent infinite loops
+
+    # Prepare molecule
+    mol = Chem.MolFromSmiles(smiles)
+    mol = Chem.AddHs(mol)
+
+    # Determine molecule size for method selection
+    num_rot_bonds = rdMolDescriptors.CalcNumRotatableBonds(mol)
+    use_etkdg = num_rot_bonds > 3  # Use advanced method for flexible molecules
+
+    while sdf_check and cnt < max_attempts:
+        try:
+            if use_etkdg:
+                # Use ETKDGv3 for better performance on larger molecules
+                params = AllChem.ETKDGv3()
+                params.randomSeed = -1  # Different random seed each time
+                params.useRandomCoords = False  # Use knowledge-based coords
+                embed_result = AllChem.EmbedMolecule(mol, params)
+            else:
+                # Use simpler method for small/rigid molecules
+                embed_result = AllChem.EmbedMolecule(mol, useRandomCoords=True)
+
+            if embed_result == -1:
+                # Embedding failed, try again
+                cnt += 1
+                continue
+
+            # Optimize geometry
+            AllChem.UFFOptimizeMolecule(mol, maxIters=1000)
+
+            # Generate SDF string and validate
+            sdf_string = Chem.MolToMolBlock(mol)
+            check = laqa_fafoom.utilities.check_geo_sdf(sdf_string, distance_cutoff_1, distance_cutoff_2)
+
+            if check:
+                sdf_check = False
+                Chem.SDWriter('mol.sdf').write(mol)
+            else:
+                cnt += 1
+
+        except Exception as e:
+            print(f"Warning: Embedding attempt {cnt} failed: {e}")
             cnt += 1
+
+    if cnt >= max_attempts:
+        print(f"Warning: Reached maximum embedding attempts ({max_attempts})")
+        print("Using last generated structure even if validation failed")
+
     return sdf_string
