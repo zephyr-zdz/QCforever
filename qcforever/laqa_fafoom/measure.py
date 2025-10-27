@@ -38,7 +38,7 @@ def dihedral_measure(sdf_string, position):
     Returns:
         float value
     Raises:
-        ValueError: If the lenght of the list is not equal 4.
+        ValueError: If the length of the list is not equal 4.
     """
     if len(position) != 4:
         raise ValueError("The position needs to be defined by 4 integers")

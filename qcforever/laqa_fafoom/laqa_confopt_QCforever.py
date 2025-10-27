@@ -16,7 +16,7 @@ def LAQA_confopt_main(infilename, TotalCharge, SpinMulti, method, nproc, mem):
     PreInput = infilename.split('.')
 
     t_laqaopt_bgn = time.time()
-    print(f"\nStart LAQA conforation searh job at {datetime.datetime.now()}")
+    print(f"\nStart LAQA conformation search job at {datetime.datetime.now()}")
     if PreInput[-1] == "sdf":
         sdfmol = Chem.SDMolSupplier(infilename, removeHs=False)
         mols = [x for x in sdfmol if x is not None]
