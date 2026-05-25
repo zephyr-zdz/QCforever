@@ -409,20 +409,22 @@ class Structure:
         # Generate the xTB input, run xTB calculation, assign
         # new attributes and update attribute values.
         xtb_object = laqa_fafoom.pyxtb.xTBObject(self.sdf_string, xtb_call, jobtype, **kwargs)
-        xtb_object.clean()
-        xtb_object.generate_input()
-        xtb_object.run_xtb()
-        self.energy = xtb_object.get_energy()
-        if jobtype == 'gradient':
-            self.force = xtb_object.get_gradient()
-        else:
-            self.initial_sdf_string = self.sdf_string
-            self.sdf_string = xtb_object.get_sdf_string_opt()
-            xtb_object.save_to_file()
-            for dof in self.dof:
-                setattr(dof, "initial_values", dof.values)
-                dof.update_values(self.sdf_string)
-        xtb_object.clean()
+        try:
+            xtb_object.clean()
+            xtb_object.generate_input()
+            xtb_object.run_xtb()
+            self.energy = xtb_object.get_energy()
+            if jobtype == 'gradient':
+                self.force = xtb_object.get_gradient()
+            else:
+                self.initial_sdf_string = self.sdf_string
+                self.sdf_string = xtb_object.get_sdf_string_opt()
+                xtb_object.save_to_file()
+                for dof in self.dof:
+                    setattr(dof, "initial_values", dof.values)
+                    dof.update_values(self.sdf_string)
+        finally:
+            xtb_object.clean()
 
     def perform_ff(self, **kwargs):
         # Generate the force-field input, run force_field calculation, assign

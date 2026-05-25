@@ -2,7 +2,9 @@
 
 import glob
 import os
+import shutil
 import subprocess
+import tempfile
 
 from qcforever import laqa_fafoom
 
@@ -15,7 +17,7 @@ class xTBObject():
     def __init__(self, sdf_string, xtb_call, jobtype='opt', 
                  gfn='2', charge=0, mult=1, optsteps=200,
                  solvmethod=None, solvent='water',
-                 sdf_out='optimized_structures.sdf'):
+                 sdf_out='optimized_structures.sdf', workdir=None):
                  
         """Initialize the xTBObject.
         Args(required):
@@ -44,6 +46,18 @@ class xTBObject():
         self.solvmethod = solvmethod
         self.solvent = solvent
         self.sdf_out = sdf_out
+        self.workdir = workdir
+        self._owns_workdir = workdir is None
+
+    def _ensure_workdir(self):
+        if self.workdir is None:
+            self.workdir = tempfile.mkdtemp(prefix='qcforever_xtb_')
+        else:
+            os.makedirs(self.workdir, exist_ok=True)
+
+    def _path(self, filename):
+        self._ensure_workdir()
+        return os.path.join(self.workdir, filename)
 
     def generate_input(self):
         """Create input files for xTB."""
@@ -51,7 +65,7 @@ class xTBObject():
 #            f.write(self.sdf_string)
 
         xyz_string = laqa_fafoom.utilities.sdf2xyz(self.sdf_string)
-        with open('xtbin.xyz', 'w') as f:
+        with open(self._path('xtbin.xyz'), 'w') as f:
             f.write(xyz_string)
 
     def run_xtb(self):
@@ -67,7 +81,8 @@ class xTBObject():
         os.environ["OMP_STACKSIZE"] = "5G"
 
         success = False
-        if os.path.exists('xtbin.xyz') is False:
+        self._ensure_workdir()
+        if os.path.exists(self._path('xtbin.xyz')) is False:
             raise OSError('Required input file not present.')
 
         if self.jobtype == 'gradient':
@@ -76,13 +91,15 @@ class xTBObject():
                           .format(self.gfn, self.charge, self.mult)
             if self.solvmethod is not None :
                 com_xtb += ' --alpb {}'.format(self.solvent)
-            xtb = subprocess.Popen(com_xtb, stdout=subprocess.PIPE, shell=True)
-            out = subprocess.Popen(['cat'], stdin=xtb.stdout,
-                                   stdout=open('result.out', 'w'), shell=True)
-            xtb.wait()
-            out.wait()
+            with open(self._path('result.out'), 'w') as out:
+                xtb = subprocess.run(com_xtb, stdout=out, stderr=subprocess.STDOUT,
+                                     shell=True, cwd=self.workdir)
+            if xtb.returncode != 0:
+                raise RuntimeError("xTB gradient calculation failed with return code {}".format(xtb.returncode))
+            if not os.path.exists(self._path('gradient')):
+                raise RuntimeError("xTB gradient calculation did not produce a gradient file")
 
-            with open('gradient', 'r') as f:
+            with open(self._path('gradient'), 'r') as f:
                 searchfile = f.readlines()
                 num_atoms = int((len(searchfile) - 3) / 2)
                 self.energy = float(searchfile[1].split()[6])
@@ -99,13 +116,13 @@ class xTBObject():
                           .format(self.gfn, self.charge, self.mult, self.optsteps)
             if self.solvmethod is not None :
                 com_xtb += ' --alpb {}'.format(self.solvent)
-            xtb = subprocess.Popen(com_xtb, stdout=subprocess.PIPE, shell=True)
-            out = subprocess.Popen(['cat'], stdin=xtb.stdout,
-                                   stdout=open('result.out', 'w'), shell=True)
-            xtb.wait()
-            out.wait()
+            with open(self._path('result.out'), 'w') as out:
+                xtb = subprocess.run(com_xtb, stdout=out, stderr=subprocess.STDOUT,
+                                     shell=True, cwd=self.workdir)
+            if xtb.returncode != 0:
+                raise RuntimeError("xTB optimization failed with return code {}".format(xtb.returncode))
 
-            with open('result.out', 'r') as f:
+            with open(self._path('result.out'), 'r') as f:
                 searchfile = f.readlines()
 
             opt_conv_key = "GEOMETRY OPTIMIZATION CONVERGED"
@@ -119,15 +136,24 @@ class xTBObject():
             #    killfile = open("kill.dat", "w")
             #    killfile.close()
 
-            energy_key = "TOTAL ENERGY"
+            if not_conv:
+                raise RuntimeError("xTB geometry optimization did not converge")
 
+            energy_key = "TOTAL ENERGY"
+            energy = None
             for line in searchfile:
                 if energy_key in line:
                     energy = float(line.split()[3])
+            if energy is None:
+                raise RuntimeError("xTB output did not contain TOTAL ENERGY")
             self.energy = energy
 
-            with open('xtbopt.xyz', 'r') as f:
-                self.sdf_string_opt = f.read()
+            if not os.path.exists(self._path('xtbopt.xyz')):
+                raise RuntimeError("xTB optimization did not produce xtbopt.xyz")
+            with open(self._path('xtbopt.xyz'), 'r') as f:
+                self.xyz_string_opt = f.read()
+                self.sdf_string_opt = laqa_fafoom.utilities.xyz2sdf(self.xyz_string_opt,
+                                                                    self.sdf_string)
                 success = True
 
         return success
@@ -162,8 +188,21 @@ class xTBObject():
         else:
             return self.gradient
 
+    def get_xyz_string_opt(self):
+        """Get the optimized XYZ string produced by xTB.
+
+        Returns:
+            optimized xyz string (str)
+        Raises:
+            AttributeError: if the optimization hasn't been performed yet
+        """
+        if not hasattr(self, 'xyz_string_opt'):
+            raise AttributeError("The calculation wasn't performed yet.")
+        else:
+            return self.xyz_string_opt
+
     def get_sdf_string_opt(self):
-        """Get the optimized sdf string.
+        """Get the optimized structure converted to an SDF string.
 
         Returns:
             optimized sdf string (str)
@@ -191,19 +230,26 @@ class xTBObject():
         """Clean the working direction after the xtb calculation has been
         completed.
         """
-        for f in glob.glob("xtb*"):
+        if self._owns_workdir:
+            if self.workdir is not None:
+                shutil.rmtree(self.workdir, ignore_errors=True)
+                self.workdir = None
+            return
+
+        self._ensure_workdir()
+        for f in glob.glob(os.path.join(self.workdir, "xtb*")):
             os.remove(f)
-        for f in glob.glob("gfn*"):
+        for f in glob.glob(os.path.join(self.workdir, "gfn*")):
             os.remove(f)
-        for f in glob.glob("wbo"):
+        for f in glob.glob(os.path.join(self.workdir, "wbo")):
             os.remove(f)
-        for f in glob.glob("charges"):
+        for f in glob.glob(os.path.join(self.workdir, "charges")):
             os.remove(f)
-        for f in glob.glob("energy"):
+        for f in glob.glob(os.path.join(self.workdir, "energy")):
             os.remove(f)
-        for f in glob.glob("gradient"):
+        for f in glob.glob(os.path.join(self.workdir, "gradient")):
             os.remove(f)
-        for f in glob.glob("result.out"):
+        for f in glob.glob(os.path.join(self.workdir, "result.out")):
             os.remove(f)
 
 
@@ -215,21 +261,22 @@ def xtb_exec(sdf_string, xtb_call, jobtype='opt', gfn='2',
     xtb_object = xTBObject(sdf_string, xtb_call, jobtype, 
                            gfn, charge, mult, optsteps,
                            solvmethod, solvent, sdf_out)
-    xtb_object.clean()
-    xtb_object.generate_input()
-    xtb_object.run_xtb()
-    if jobtype == 'gradient':
-        unit = 'hartree'
-        energy = xtb_object.get_energy(unit)
-        grad = xtb_object.get_gradient()
-        xtb_object.clean() 
-        return energy, grad
-    else:
-        unit = 'hartree'
-        energy = xtb_object.get_energy(unit)
-        sdf_string_opt = xtb_object.get_sdf_string_opt()
+    try:
         xtb_object.clean()
-        return energy, sdf_string_opt
+        xtb_object.generate_input()
+        xtb_object.run_xtb()
+        if jobtype == 'gradient':
+            unit = 'hartree'
+            energy = xtb_object.get_energy(unit)
+            grad = xtb_object.get_gradient()
+            return energy, grad
+        else:
+            unit = 'hartree'
+            energy = xtb_object.get_energy(unit)
+            xyz_string_opt = xtb_object.get_xyz_string_opt()
+            return energy, xyz_string_opt
+    finally:
+        xtb_object.clean()
 
 
 if __name__ == '__main__':

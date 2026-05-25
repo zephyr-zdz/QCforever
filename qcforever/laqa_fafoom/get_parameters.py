@@ -102,7 +102,9 @@ def create_dof_object(type_of_deg, positions):
         return laqa_fafoom.deg_of_freedom.PyranoseRing(positions)
 
 
-def generate_conformers_batch(smiles, num_conformers, distance_cutoff_1, distance_cutoff_2):
+def generate_conformers_batch(smiles, num_conformers, distance_cutoff_1,
+                              distance_cutoff_2, overgenerate_factor=1.5,
+                              rmsd_prune=None, seed=None):
     """Generate multiple conformers efficiently using batch processing.
 
     This function uses RDKit's EmbedMultipleConfs for much faster generation
@@ -113,6 +115,11 @@ def generate_conformers_batch(smiles, num_conformers, distance_cutoff_1, distanc
         num_conformers (int): Number of conformers to generate
         distance_cutoff_1 (float): min distance between non-bonded atoms [A]
         distance_cutoff_2 (float): max distance between bonded atoms [A]
+        overgenerate_factor (float): Generate extra candidates to account for
+            embedding or geometry validation failures
+        rmsd_prune (float or None): RDKit RMSD pruning threshold. If None,
+            choose a threshold from the number of rotatable bonds.
+        seed (int or None): RDKit random seed. None uses random embedding.
 
     Returns:
         list of sdf strings: Valid conformer structures
@@ -128,12 +135,15 @@ def generate_conformers_batch(smiles, num_conformers, distance_cutoff_1, distanc
 
     # Configure embedding parameters based on molecule size
     params = AllChem.ETKDGv3()
-    params.randomSeed = -1  # Use different random seeds
+    params.randomSeed = -1 if seed is None else int(seed)
     params.numThreads = 0  # Use all available cores
-    params.pruneRmsThresh = 0.5 if num_rot_bonds > 5 else 0.3  # Auto-prune similar structures
+    if rmsd_prune is None:
+        rmsd_prune = 0.5 if num_rot_bonds > 5 else 0.3
+    params.pruneRmsThresh = float(rmsd_prune)
 
     # Generate more conformers than needed to account for failures
-    target_confs = int(num_conformers * 1.5)
+    target_confs = max(num_conformers,
+                       int(num_conformers * float(overgenerate_factor)))
 
     print(f"Generating {target_confs} conformers (target: {num_conformers})...")
 

@@ -7,6 +7,100 @@ from qcforever import laqa_fafoom
 
 import random
 import numpy as np
+from rdkit import Chem
+
+
+def _write_population_sdf(population, sdf_out):
+    """Write the selected initial population as valid SDF records."""
+    writer = Chem.SDWriter(sdf_out)
+    try:
+        for struct in population:
+            mol = Chem.MolFromMolBlock(struct.sdf_string, removeHs=False)
+            if mol is None:
+                raise ValueError("Could not parse optimized structure as SDF")
+            if hasattr(struct, 'energy'):
+                mol.SetProp("Energy", str(struct.energy))
+            writer.write(mol)
+    finally:
+        writer.close()
+
+
+def _optimize_candidate(str3d, energy_function, params, blacklist, population):
+    if not str3d.is_geometry_valid():
+        print("Geometry of " + str(str3d) + " is invalid.")
+        return False
+
+    if str3d in blacklist:
+        print("Geomerty of " + str(str3d) + " is fine, but already known.")
+        return False
+
+    name = "initial_%d" % (len(population))
+    try:
+        laqa_fafoom.run_utilities.optimize(str3d, energy_function, params, name)
+    except Exception as exc:
+        print("Optimization of {} failed: {}".format(str(str3d), exc))
+        return False
+
+    laqa_fafoom.run_utilities.check_for_kill()
+    str3d.send_to_blacklist(blacklist)
+    population.append(str3d)
+    print("Geometry of {} is added to the population, energy: {:.5f}"
+          .format(str(str3d), str3d.energy))
+    laqa_fafoom.run_utilities.relax_info(str3d)
+    return True
+
+
+def _structure_from_sdf(mol, sdf_string):
+    str3d = laqa_fafoom.structure.Structure(mol)
+    str3d.sdf_string = sdf_string
+    for dof in str3d.dof:
+        dof.update_values(str3d.sdf_string)
+    return str3d
+
+
+def _populate_batch(mol, params, energy_function, blacklist, population):
+    popsize = params['popsize']
+    overgenerate_factor = max(1.0, float(params['overgenerate_factor']))
+    num_candidates = max(popsize, int(popsize * overgenerate_factor))
+
+    conformers = laqa_fafoom.get_parameters.generate_conformers_batch(
+        mol.smiles,
+        num_candidates,
+        mol.distance_cutoff_1,
+        mol.distance_cutoff_2,
+        overgenerate_factor=1.0,
+        rmsd_prune=params['rmsd_prune'],
+        seed=params['seed'])
+
+    if not conformers:
+        print("Batch conformer generation did not produce valid candidates.")
+        return 0
+
+    print("Optimizing {} batch-generated conformer candidates.".format(len(conformers)))
+    accepted_before = len(population)
+    for sdf_string in conformers:
+        str3d = _structure_from_sdf(mol, sdf_string)
+        _optimize_candidate(str3d, energy_function, params, blacklist, population)
+
+    population[:] = sorted(population, key=lambda x: x.energy)[:popsize]
+    return len(population) - accepted_before
+
+
+def _populate_legacy(mol, params, energy_function, blacklist, population):
+    popsize = params['popsize']
+    cnt_max = params['cnt_max']
+    cnt = 0
+
+    while len(population) < popsize and cnt < cnt_max:
+        print("\n----- New trial: {:6} -----\n".format(cnt+1))
+        str3d = laqa_fafoom.structure.Structure(mol)
+        str3d.generate_structure()
+        _optimize_candidate(str3d, energy_function, params, blacklist, population)
+        cnt += 1
+
+    if cnt == cnt_max and len(population) < popsize:
+        print("\nThe allowed number of trials for building the "
+              "population has been exceeded.")
 
 
 def LAQA_initgeom(param_file, SMILES=""):
@@ -32,7 +126,9 @@ def LAQA_initgeom(param_file, SMILES=""):
                     'qcmethod': 'pm6', 'solvmethod': None, 'solvent': 'water',
                     'charge': 0, 'mult': 1,
                     'nprocs': 1, 'memory': '2GB',
-                    'sdf_out': 'initial_structures.sdf', 'printlevel': 0}
+                    'sdf_out': 'initial_structures.sdf', 'printlevel': 0,
+                    'initgeom_method': 'batch_etkdg',
+                    'overgenerate_factor': 2.0, 'rmsd_prune': None}
 
     # Set defaults for parameters not defined in the parameter file.
 
@@ -43,8 +139,12 @@ def LAQA_initgeom(param_file, SMILES=""):
     cnt_max = params['cnt_max']
     seed = params['seed']
     printlevel = params['printlevel']
+    initgeom_method = str(params['initgeom_method']).lower()
     print("energy_function: " , energy_function)
     print("popsize:", popsize, "cnt_max: ", cnt_max, "seed ", seed)
+    print("initgeom_method:", initgeom_method,
+          "overgenerate_factor:", params['overgenerate_factor'],
+          "rmsd_prune:", params['rmsd_prune'])
 
     random.seed(seed)
     np.random.seed(seed=seed)
@@ -81,52 +181,37 @@ def LAQA_initgeom(param_file, SMILES=""):
         print("Identified  " + str(dof) + ": " + str(getattr(mol, dof)))
 
     print("\n___Initialization of 3D structures ___\n")
-    cnt = 0
     population, blacklist = [], []
-    while len(population) < popsize and cnt < cnt_max:
+    laqa_fafoom.utilities.remover_file(params['sdf_out'])
 
-        # Generate sensible and unique 3D structures.
+    if initgeom_method == 'batch_etkdg':
+        _populate_batch(mol, params, energy_function, blacklist, population)
+        if len(population) < popsize:
+            print("Batch initialization produced {}/{} structures; falling back to legacy generation."
+                  .format(len(population), popsize))
+            _populate_legacy(mol, params, energy_function, blacklist, population)
+    elif initgeom_method == 'legacy':
+        _populate_legacy(mol, params, energy_function, blacklist, population)
+    else:
+        raise ValueError("Unknown initgeom_method: {}".format(params['initgeom_method']))
 
-        print("\n----- New trial: {:6} -----\n".format(cnt+1))
-        str3d = laqa_fafoom.structure.Structure(mol)
-        str3d.generate_structure()
+    if len(population) == 0:
+        raise RuntimeError("Initial geometry generation failed: no valid structures were produced")
 
-        if not str3d.is_geometry_valid():
-            print("Geometry of " + str(str3d) + " is invalid.")
-        else:
-            if str3d not in blacklist:
+    population_sorted = sorted(population, key=lambda x:x.energy)[:popsize]
+    _write_population_sdf(population_sorted, params['sdf_out'])
 
-                # Perform the local optimization
-
-                name = "initial_%d" % (len(population))
-                laqa_fafoom.run_utilities.optimize(str3d, energy_function, params, name)
-                laqa_fafoom.run_utilities.check_for_kill()
-                str3d.send_to_blacklist(blacklist)
-                population.append(str3d)
-                print("Geometry of {} is added to the population, energy: {:.5f}"
-                      .format(str(str3d), str3d.energy))
-                laqa_fafoom.run_utilities.relax_info(str3d)
-            else:
-                print("Geomerty of " + str(str3d) + " is fine, but already known.")
-                      
-        cnt += 1
-
-    if cnt == cnt_max:
-        print("\nThe allowed number of trials for building the "
-              "population has been exceeded.")
     print("\n___Initialization of 3D structure completed___\n")
-    print("Total number of population (vaid structures): ", len(population))
+    print("Total number of population (vaid structures): ", len(population_sorted))
 
     print("\nInitial population before sorting:\nID    Energy [eV]")
     for i in range(len(population)):
         print("{:5} {:20.6f}".format(population[i].index, population[i].energy))
 
-    population_sorted = sorted(population, key=lambda x:x.energy)
-
     print("\nInitial population after sorting:\nID    Energy [eV]")
           
     for i in range(len(population_sorted)):
-        print("{:5} {:20.6f}".format(population[i].index, population[i].energy))
+        print("{:5} {:20.6f}".format(population_sorted[i].index, population_sorted[i].energy))
     #print("\nBlacklist: " + ', '.join([str(v) for v in blacklist]))
 
     t_init_end = time.time()

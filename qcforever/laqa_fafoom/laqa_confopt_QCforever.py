@@ -69,10 +69,19 @@ def make_laqa_input(SMILES, SpinMulti, TotalCharge, RotBond, method, nproc, mem)
 
     input_s += f'\n[Initial geometry]\n'
     input_s += f'popsize = {Num_popsize}\n'
+    input_s += f'initgeom_method = "batch_etkdg"\n'
+    input_s += f'overgenerate_factor = 2.0\n'
+    input_s += f'rmsd_prune = 0.3\n'
 
     # For large molecules, increase max iterations for structure generation
     if RotBond > 15:
         input_s += f'cnt_max = {min(1000, 500 + RotBond * 20)}\n'
+
+    if method == 'xtb':
+        input_s += f'energy_function = "xtb"\n'
+        input_s += f'gfn = "2"\n'
+        input_s += f'charge = {TotalCharge}\n'
+        input_s += f'mult = {SpinMulti}\n'
 
     input_s += '\n[LAQA settings]\n'
 
@@ -98,5 +107,4 @@ def make_laqa_input(SMILES, SpinMulti, TotalCharge, RotBond, method, nproc, mem)
     with open('laqa_setting.inp', 'w') as laqa_infile:
         
             laqa_infile.write(input_s)
-
 
