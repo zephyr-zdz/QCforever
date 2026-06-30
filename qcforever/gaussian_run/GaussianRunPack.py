@@ -8,6 +8,8 @@ import pickle
 
 import numpy as np
 
+from pathlib import Path
+
 from qcforever import gaussian_run
 from qcforever.util import read_mol_file, check_resource, UV_similarity
 #from qcforever.laqa_fafoom import laqa_confopt_sdf
@@ -29,7 +31,7 @@ class GaussianDFTRun:
                 error=0, 
                 restart=True, 
                 pklsave=False):
-        self.in_file = in_file
+        self.in_file = Path(in_file).name
         self.functional = functional.lower()
         self.basis = basis.lower()
         self.nproc = check_resource.respec_cores(nproc)
@@ -428,7 +430,7 @@ class GaussianDFTRun:
         if Newinput == True:
             Input_mode = 'w'
         else:
-            if not os.path.isfile(GauInputName):
+            if not Path(GauInputName).is_file():
                 Input_mode = 'w'
             else:
                 Input_mode = 'a'
@@ -916,26 +918,24 @@ class GaussianDFTRun:
         TargetStates = [0]
         TargetSpinMulti = []
         TargetTotalCharge = []
-        PreGauInput = infilename.split('.')
-        JobName = PreGauInput[0]
-        #GauInputName = PreGauInput[0]+'.com'    
-        # File type of input?
+        p = Path(infilename)
+        JobName, JobNameSuffix = p.stem, p.suffix
         ReadFrom = None
         # Initialization of molecular coordinate
         atm, X, Y, Z = [], [], [], []
         Bondpair1 = []
         Bondpair2 = []
         # Classify input
-        if PreGauInput[1] == "sdf":
+        if JobNameSuffix == ".sdf":
             ReadFrom = 'sdf' 
             atm, X, Y, Z, TotalCharge, SpinMulti, Bondpair1, Bondpair2 = read_mol_file.read_sdf(infilename)
-        elif PreGauInput[1] == "xyz":
+        elif JobNameSuffix == ".xyz":
             ReadFrom = 'xyz' 
             atm, X, Y, Z, TotalCharge, SpinMulti = read_mol_file.read_xyz(infilename)
-        elif PreGauInput[1] == "chk":
+        elif JobNameSuffix == ".chk":
             ReadFrom = 'chk' 
-        elif PreGauInput[1] == "fchk":
-            TotalCharge, SpinMulti = gaussian_run.fchk2chk.Get_fchk(PreGauInput[0])
+        elif JobNameSuffix == ".fchk":
+            TotalCharge, SpinMulti = gaussian_run.fchk2chk.Get_fchk(JobName)
             ReadFrom = 'chk' 
         else:
             print("Invalid input file")
@@ -1119,14 +1119,15 @@ class GaussianDFTRun:
 
         # Make work directory and move to the directory
         pwd = os.getcwd()
-        print(pwd)
-        if os.path.isdir(JobName):
+        print(f'Current dir: {pwd}')
+        if Path(JobName).is_dir():
             shutil.rmtree(JobName)
         os.mkdir(JobName)
         if ReadFrom == 'chk':
             inchkfile = JobName + '.chk'
             shutil.move(inchkfile, JobName) 
         os.chdir(JobName)
+        print(f'Calculation dir: {os.getcwd()}')
 
         # Initialization of otuput dictionary.
         output_dic = []
@@ -1179,8 +1180,9 @@ class GaussianDFTRun:
             print('Try to find stable conformation...')
             if ReadFrom == 'sdf' or ReadFrom == 'xyz':
                 print('The input is ready for the conformation search...')
-                #original_sdf = '../' + infilename
-                original_file = '../' + infilename
+                original_file = str(Path("..") / infilename)
+                #original_file = '../' + infilename
+                print (type(original_file))
                 try:
                     #laqa_confopt_sdf.LAQA_confopt_main(original_sdf, TotalCharge, SpinMulti, 
                     laqa_confopt_QCforever.LAQA_confopt_main(original_file, TotalCharge, SpinMulti, 
@@ -1466,9 +1468,8 @@ class GaussianDFTRun:
                 self.chain_job(JobNameState, scf_need, job_thisstate, TotalCharge, SpinMulti, 
                                     targetstate, ReadFrom, 
                                     element=atm, atomX=X, atomY=Y, atomZ=Z, optoption=optoption, TDstate_info=TDstate_info)
-
             
-                job_state = gaussian_run.Exe_Gaussian.exe_Gaussian(JobNameState, self.timexe)
+                job_state = gaussian_run.Exe_Gaussian.exe_Gaussian(JobNameState, self.timexe, self.error)
                 print (job_state)
                 # When the scf is performed, the obtained wavefunction is saved to chk file.
                 # But for 'symm' and 'volume' that information is emply except for when the input is chk or fchk files.
@@ -1476,7 +1477,8 @@ class GaussianDFTRun:
                     gaussian_run.chk2fchk.Get_chklist(1)
                 elif scf_need != True and ReadFrom != 'chk':
                     for f in glob.glob('./*.chk'):
-                        os.remove(os.path.join('.', f))
+                        #os.remove(os.path.join('.', f))
+                        Path(f).unlink()
 
                 #output_prop = self.Extract_values(JobName, option_dict, Bondpair1, Bondpair2)
                 #output_dic[i].update(output_prop)
@@ -1486,7 +1488,7 @@ class GaussianDFTRun:
                     output_dic[i][f'log_{i}'] = job_state
                 except Exception as e:
                     print(e)
-                    job_state = "error"
+                    job_state = f"{e}"
                     output_dic[i][f'log_{i}'] = job_state
                     break
                     #pass
@@ -1497,12 +1499,23 @@ class GaussianDFTRun:
                     E_dH = output_dic[i]["Energy"][0]
                     output_dic[i]["pka"] = (E_dH - E_pH)*Eh2kJmol
 
+                if 'fluor' in job_thisstate :
+                    if job_state == 'normal':
+                        output_dic[i]["fluorescence"] = 'Likely'
+                    else:
+                        output_dic[i]["fluorescence"] = 'Unlikely'
+                        
+
                 if 'tadf' in job_thisstate:
-                    TADF_Eng = 0.0
-                    S_Eext = output_dic[i-1]["MinEtarget"]
-                    T_Eext = output_dic[i]["T_Min"]
-                    TADF_Eng = S_Eext - T_Eext
-                    output_dic[i]["Delta(S-T)"] = TADF_Eng
+                    if job_state == 'normal':
+                        output_dic[i]["phosphorescence"] = 'Likely'
+                        TADF_Eng = 0.0
+                        S_Eext = output_dic[i-1]["MinEtarget"]
+                        T_Eext = output_dic[i]["T_Min"]
+                        TADF_Eng = S_Eext - T_Eext
+                        output_dic[i]["Delta(S-T)"] = TADF_Eng
+                    else:
+                        output_dic[i]["phosphorescence"] = 'Unlikely'
 
         output_sum = {}
         for i, j in enumerate(output_dic):
@@ -1523,25 +1536,31 @@ class GaussianDFTRun:
     
         #Decide the log state        
         keylist = list(output_sum.keys())
-        for i in range(len(keylist)):
-            if re.match('log', keylist[i]):    
-                if output_sum[keylist[i]] == 'error':
-                    if 'log' in output_sum.keys() and output_sum['log'] != 'normal':
-                        output_sum['log'] += 'Value extraction failed! '
-                    else:
-                        output_sum['log'] = 'Value extraction failed! '
-                elif output_sum[keylist[i]] == 'abnormal':
-                    if 'log' in output_sum.keys() and output_sum['log'] != 'normal':
-                        output_sum['log'] += 'Gaussian computation failed! '
-                    else:
-                        output_sum['log'] = 'Gaussian computation failed! '
-                elif output_sum[keylist[i]] == 'timeout':
-                    if 'log' in output_sum.keys() and output_sum['log'] != 'normal':
-                        output_sum['log'] += 'Not enough time for Gaussian calculations! '
-                    else:
-                        output_sum['log'] = 'Not enough time for Gaussian calculations! '
-                else:
-                    output_sum['log'] = 'normal'
+
+        messages = {
+            'error': 'Value extraction failed! ',
+            'abnormal': 'Gaussian computation failed! ',
+            'timeout': 'Not enough time for Gaussian calculations! ',
+            'transition': 'Optimization may not succeed! ',
+            'stagnation': 'Optimization may not succeed! ',
+            'divergence': 'Optimization may not succeed! ',
+            'oscillation': 'Optimization may not succeed! ',
+            '': 'Wrong point is not identified! ',
+        }
+
+        logs = []
+
+        for key in keylist:
+            if not re.match(r'log', key):
+                continue
+
+            status = output_sum[key]
+
+            if status in messages:
+                logs.append(messages[status])
+
+        output_sum['log'] = ''.join(logs) if logs else 'normal'
+
 
         if output_sum['log'] == 'normal' and 'fluor' in option_dict and 'opt' in option_dict and 'energy' in option_dict:
             print(output_sum['MinEtarget'])
