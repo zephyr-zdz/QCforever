@@ -44,6 +44,8 @@ def LAQA_confopt_main(infilename, TotalCharge, SpinMulti, method, nproc, mem):
 
 def make_laqa_input(SMILES, SpinMulti, TotalCharge, RotBond, method, nproc, mem):
 
+    method = str(method).strip().lower()
+
     # Smart population sizing with bounds to handle edge cases and large molecules
     # - Minimum of 10 to handle rigid molecules (RotBond=0)
     # - Tiered scaling to balance exploration vs computational cost
@@ -107,4 +109,3 @@ def make_laqa_input(SMILES, SpinMulti, TotalCharge, RotBond, method, nproc, mem)
     with open('laqa_setting.inp', 'w') as laqa_infile:
         
             laqa_infile.write(input_s)
-

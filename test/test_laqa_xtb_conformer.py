@@ -44,6 +44,59 @@ M  END
 
 
 class LAQAXTBConformerTests(unittest.TestCase):
+    def test_make_laqa_input_accepts_uppercase_xtb_method(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                laqa_fafoom.laqa_confopt_QCforever.make_laqa_input(
+                    "CCO", 1, 0, 1, "XTB", 1, "")
+
+                with open("laqa_setting.inp") as f:
+                    settings = f.read()
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(settings.count('energy_function = "xtb"'), 2)
+        self.assertIn("mult = 1", settings)
+        self.assertIn("charge = 0", settings)
+
+    def test_xtb_uses_unpaired_electrons_for_uhf_argument(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_xtb = os.path.join(tmpdir, "mock_xtb.py")
+            args_file = os.path.join(tmpdir, "args.txt")
+            with open(mock_xtb, "w") as f:
+                f.write(textwrap.dedent("""
+                    import os
+                    import shutil
+                    import sys
+                    with open(os.environ["MOCK_XTB_ARGS"], "a") as args:
+                        args.write(" ".join(sys.argv[1:]) + "\\n")
+                    shutil.copyfile("xtbin.xyz", "xtbopt.xyz")
+                    print("GEOMETRY OPTIMIZATION CONVERGED")
+                    print(" | TOTAL ENERGY      -1.234 Eh")
+                """))
+
+            old_args_file = os.environ.get("MOCK_XTB_ARGS")
+            os.environ["MOCK_XTB_ARGS"] = args_file
+            try:
+                xtb_call = '{} "{}"'.format(sys.executable, mock_xtb)
+                for mult in (1, 2, 3):
+                    laqa_fafoom.pyxtb.xtb_exec(
+                        WATER_SDF, xtb_call, jobtype='opt', mult=mult)
+            finally:
+                if old_args_file is None:
+                    os.environ.pop("MOCK_XTB_ARGS", None)
+                else:
+                    os.environ["MOCK_XTB_ARGS"] = old_args_file
+
+            with open(args_file) as f:
+                args_lines = f.read().splitlines()
+
+            self.assertIn("--uhf 0", args_lines[0])
+            self.assertIn("--uhf 1", args_lines[1])
+            self.assertIn("--uhf 2", args_lines[2])
+
     def test_xtb_opt_uses_isolated_workdir_and_returns_xyz_convertible_to_sdf(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             mock_xtb = os.path.join(tmpdir, "mock_xtb.py")

@@ -12,6 +12,13 @@ hartree2eV = 27.21138602
 hartree2kcalmol = 627.503
 
 
+def _multiplicity_to_uhf(mult):
+    multiplicity = int(mult)
+    if multiplicity < 1:
+        raise ValueError("Spin multiplicity must be a positive integer")
+    return multiplicity - 1
+
+
 class xTBObject():
     '''Create and handle xTB objects.'''
     def __init__(self, sdf_string, xtb_call, jobtype='opt', 
@@ -84,11 +91,12 @@ class xTBObject():
         self._ensure_workdir()
         if os.path.exists(self._path('xtbin.xyz')) is False:
             raise OSError('Required input file not present.')
+        uhf = _multiplicity_to_uhf(self.mult)
 
         if self.jobtype == 'gradient':
             com_xtb = self.xtb_call \
                       + ' --gfn{:>2} xtbin.xyz --chrg {} --uhf {} --grad'\
-                          .format(self.gfn, self.charge, self.mult)
+                          .format(self.gfn, self.charge, uhf)
             if self.solvmethod is not None :
                 com_xtb += ' --alpb {}'.format(self.solvent)
             with open(self._path('result.out'), 'w') as out:
@@ -113,7 +121,7 @@ class xTBObject():
         else:
             com_xtb = self.xtb_call \
                       + ' --gfn{:>2} xtbin.xyz --chrg {} --uhf {} --opt --cycles {}'\
-                          .format(self.gfn, self.charge, self.mult, self.optsteps)
+                          .format(self.gfn, self.charge, uhf, self.optsteps)
             if self.solvmethod is not None :
                 com_xtb += ' --alpb {}'.format(self.solvent)
             with open(self._path('result.out'), 'w') as out:
