@@ -30,13 +30,15 @@ class GaussianDFTRun:
                 solvent="0", 
                 error=0, 
                 restart=True, 
-                pklsave=False):
+                pklsave=False,
+                solvent_model="SMD"):
         self.in_file = Path(in_file).name
         self.functional = functional.lower()
         self.basis = basis.lower()
         self.nproc = check_resource.respec_cores(nproc)
         self.value = value
-        self.solvent = solvent.lower()
+        self.solvent = self._normalize_solvent(solvent)
+        self.solvent_model = self._normalize_solvent_model(solvent_model)
         self.restart = restart
         self.error = error
         self.pklsave = pklsave
@@ -47,6 +49,28 @@ class GaussianDFTRun:
         self.ref_uv_path = ''
         self.geom_spec = {}
         self.para_functional = []
+
+    @staticmethod
+    def _normalize_solvent(solvent):
+        if solvent is None:
+            return '0'
+        return str(solvent).strip().lower()
+
+    @staticmethod
+    def _normalize_solvent_model(solvent_model):
+        if solvent_model is None:
+            return 'SMD'
+        solvent_model = str(solvent_model).strip()
+        if solvent_model == '':
+            return 'SMD'
+        return solvent_model.upper()
+
+    @classmethod
+    def _is_vacuum_solvent(cls, solvent):
+        try:
+            return float(cls._normalize_solvent(solvent)) == 0.0
+        except ValueError:
+            return False
 
     def check_scf_need(self, option):
         all_keys = set(option.keys())
@@ -336,13 +360,14 @@ class GaussianDFTRun:
     def MakeSolventLine(self):
         s = ''
         s_solvent = ''
+        solvent_model = self.solvent_model
         try:
-            float(self.solvent)
+            solvent_eps = float(self.solvent)
         except ValueError:
-            print('Solvent effect is included by PCM')
-            s += f'SCRF=(PCM, solvent={self.solvent})\n'
+            print(f'Solvent effect is included by {solvent_model}')
+            s += f'SCRF=({solvent_model}, solvent={self.solvent})\n'
         else:
-            if self.solvent == '0':
+            if solvent_eps == 0.0:
                 return s, s_solvent
             else:
                 print('Solvent effect is included by PCM')
@@ -356,7 +381,8 @@ class GaussianDFTRun:
         scf='open', run_type=None, optoption='', Newinput=False, 
         Mol_atom=[], X=[], Y=[], Z=[], geom_spec=False,
         TDDFT=False, TDstate=None, target=1,
-        readchk=None, oldchk=None, newchk=None, solvent='0'):
+        readchk=None, oldchk=None, newchk=None, solvent='0',
+        solvent_model=None):
 
         #Section for system control 
         line_system = ''
@@ -402,7 +428,10 @@ class GaussianDFTRun:
         #Section for solvent
         SCRF = ''
         SCRF_read = ''
-        if solvent != '0':
+        solvent = self._normalize_solvent(solvent)
+        if solvent_model is not None:
+            self.solvent_model = self._normalize_solvent_model(solvent_model)
+        if not self._is_vacuum_solvent(solvent):
             self.solvent = solvent
             SCRF, SCRF_read = self.MakeSolventLine()
 
@@ -1615,5 +1644,3 @@ if __name__ == '__main__':
 
     newchk = JobName+'_exopt'
     test_sdf.make_input(JobName, 0, 1, run_type='opt', Newinput=False, TDDFT=True, TDstate=None, target=3, readchk='all', newchk=newchk)
-
-

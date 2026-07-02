@@ -38,8 +38,9 @@ def main():
     ##Making the instance with specifying functional, basis set, number of cores.
     #B3LYP/STO-3G with 10 cores
     test = GaussianRunPack.GaussianDFTRun('B3LYP', 'STO-3G', 10, option, infilename, restart=False)
-    #B3LYP/STO-3G with solvent effect after computation chk file will be removed
-    #test = GaussianRunPack.GaussianDFTRun('B3LYP', 'STO-3G', 10, option, infilename, solvent='water', restart=False)
+    #B3LYP/STO-3G with SMD solvent effect after computation chk file will be removed
+    #test = GaussianRunPack.GaussianDFTRun('B3LYP', 'STO-3G', 10, option, infilename, solvent='water', solvent_model='SMD', restart=False)
+    #Use solvent_model='PCM' to keep the previous PCM behavior
     #KTLC-BLYP-BO/3-21G with 10 cores. After computation, the data will be saved as pkl file
     #test = GaussianRunPack.GaussianDFTRun('KTLC-BLYP-BO', '3-21G', 10, option, infilename,  restart=False, pklsave=True)
     #KTLC-BLYP-BO/3-21G with 10 cores. After computation, the data will be saved as pkl file

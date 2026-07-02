@@ -51,7 +51,7 @@ python gamess_main.py input_file
 from qcforever.gaussian_run import GaussianRunPack
 
 # Then make an instance (here is test).
-test = GaussianRunPack.GaussianDFTRun(Functional, basis_set, ncore, option, input_file, solvent='water', restart=False)
+test = GaussianRunPack.GaussianDFTRun(Functional, basis_set, ncore, option, input_file, solvent='water', solvent_model='SMD', restart=False)
 # And excuse Gaussian as the followign.
 outdic = test.run_gaussian()
 ```
@@ -72,8 +72,13 @@ and [KTLC- series](https://doi.org/10.1021/acs.jctc.3c00764) (`KTLC-BLYP-BO`, `K
 - ***input_file*** is a string to specify the input file.
   QCforever accepts a sdf, xyz, Gaussian chk, or a Gaussian fchk file.
 
-- ***solvent*** is to include the solvent effect through PCM.
+- ***solvent*** is to include the solvent effect.
   The default value is "0", in vacuo.
+
+- ***solvent_model*** is to specify the Gaussian SCRF solvent model.
+  The default value is "SMD".
+  For example, use `solvent='water', solvent_model='PCM'` to keep the previous PCM behavior.
+  Numeric dielectric constants such as `solvent='78.3553'` continue to use the existing Generic PCM input.
 
 - ***restart*** is to control to save molecular information as fchk or xyz.
   The Default value is True that means molecular information is saved as a Gaussian fchk file (electronic structure is also saved.),
