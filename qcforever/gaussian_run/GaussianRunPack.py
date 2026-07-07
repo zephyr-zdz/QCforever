@@ -964,8 +964,8 @@ class GaussianDFTRun:
         elif JobNameSuffix == ".chk":
             ReadFrom = 'chk' 
         elif JobNameSuffix == ".fchk":
-            TotalCharge, SpinMulti = gaussian_run.fchk2chk.Get_fchk(JobName)
-            ReadFrom = 'chk' 
+            TotalCharge, SpinMulti, _ = gaussian_run.fchk2chk.Get_fchk(JobName)
+            ReadFrom = 'chk'
         else:
             print("Invalid input file")
             exit()
@@ -1296,8 +1296,11 @@ class GaussianDFTRun:
                         TDstate_info = output_dic[0]["state_index"][0] 
                         #print(TDstate_info)
                         print ('The ground state fchk file was found!')
-                        GS_TotalCharge, GS_SpinMulti = gaussian_run.fchk2chk.Get_fchk(File_name.replace('.fchk',''))
-                        shutil.copy(File_name.replace('.fchk','.chk'), Jobchk) 
+                        GS_TotalCharge, GS_SpinMulti, chk_ok = gaussian_run.fchk2chk.Get_fchk(File_name.replace('.fchk',''))
+                        if chk_ok:
+                            shutil.copy(File_name.replace('.fchk','.chk'), Jobchk)
+                        else:
+                            print('Excited-state checkpoint seeding failed; the fluorescence stage will be reported as failed for this molecule.')
                         ReadFrom = 'chk'
                         # Initialization of molecular coordinate
                         atm, X, Y, Z = [], [], [], []
@@ -1306,8 +1309,11 @@ class GaussianDFTRun:
                         TDstate_info = output_dic[0]["state_index"][1] 
                         #print(TDstate_info)
                         print ('The ground state fchk file was found!')
-                        GS_TotalCharge, GS_SpinMulti = gaussian_run.fchk2chk.Get_fchk(File_name.replace('.fchk',''))
-                        shutil.copy(File_name.replace('.fchk','.chk'), Jobchk) 
+                        GS_TotalCharge, GS_SpinMulti, chk_ok = gaussian_run.fchk2chk.Get_fchk(File_name.replace('.fchk',''))
+                        if chk_ok:
+                            shutil.copy(File_name.replace('.fchk','.chk'), Jobchk)
+                        else:
+                            print('Excited-state checkpoint seeding failed; the TADF stage will be reported as failed for this molecule.')
                         ReadFrom = 'chk'
                         # Initialization of molecular coordinate
                         atm, X, Y, Z = [], [], [], []
@@ -1587,14 +1593,27 @@ class GaussianDFTRun:
 
             if status in messages:
                 logs.append(messages[status])
+            elif status != 'normal':
+                # An unrecognized status (e.g. the exception string stored when
+                # per-state value extraction crashed) is an unexpected failure.
+                # Treat it as an error so a failed stage is never reported as a
+                # successful ('normal') run.
+                logs.append(messages['error'])
 
         output_sum['log'] = ''.join(logs) if logs else 'normal'
 
 
         if output_sum['log'] == 'normal' and 'fluor' in option_dict and 'opt' in option_dict and 'energy' in option_dict:
-            print(output_sum['MinEtarget'])
-            print(output_sum['Energy'][0])
-            output_sum['E0-0'] = Eh2eV*(output_sum['MinEtarget']-output_sum['Energy'][0])
+            if 'MinEtarget' in output_sum and 'Energy' in output_sum:
+                print(output_sum['MinEtarget'])
+                print(output_sum['Energy'][0])
+                output_sum['E0-0'] = Eh2eV*(output_sum['MinEtarget']-output_sum['Energy'][0])
+            else:
+                # Defensive guard: the excited-state seeding/opt can fail without
+                # producing MinEtarget. Report it instead of raising a KeyError
+                # that would discard the already-completed ground-state/UV/SCF
+                # results.
+                print('MinEtarget/Energy not available; E0-0 cannot be computed.')
         else:
             pass
 

@@ -1,3 +1,4 @@
+import os
 import sys
 import subprocess
 import re
@@ -20,13 +21,29 @@ def ChargeSpin_fchk(fchkfile):
 
 
 def Get_fchk(jobname):
+    """Convert ``{jobname}.fchk`` back to a binary checkpoint with ``unfchk``.
+
+    Returns ``(TotalCharge, SpinMulti, ok)`` where ``ok`` is ``False`` when the
+    conversion failed (``unfchk`` exited non-zero / crashed, or produced no
+    usable ``.chk``). Callers can then skip work that depends on the
+    reconstructed checkpoint instead of silently proceeding with a missing or
+    invalid ``.chk``.
+    """
     fchkfile = f"{jobname}.fchk"
     TotalCharge, SpinMulti = ChargeSpin_fchk(fchkfile)
+    ok = True
     try:
         subprocess.run(['unfchk', fchkfile], check=True)
-    except:
-        print ("Failed converting fchk to chk!")            
-    return TotalCharge, SpinMulti
+    except Exception as e:
+        print(f"Failed converting fchk to chk: {e}")
+        ok = False
+    # unfchk can crash (e.g. segfault on a malformed fchk) without writing a
+    # usable checkpoint, so verify the output actually exists and is non-empty.
+    chkfile = f"{jobname}.chk"
+    if not os.path.isfile(chkfile) or os.path.getsize(chkfile) == 0:
+        print(f"fchk to chk conversion did not produce a usable checkpoint: {chkfile}")
+        ok = False
+    return TotalCharge, SpinMulti, ok
 
 
 if __name__ == '__main__':
@@ -35,6 +52,7 @@ if __name__ == '__main__':
         jobname = sys.argv[1]
     except:
         print (usage); sys.exit()
-    Charge, SpinMulti = Get_fchk(jobname)
+    Charge, SpinMulti, ok = Get_fchk(jobname)
     print(f"Charge: {Charge}")
     print(f"SpinMulti: {SpinMulti}")
+    print(f"Converted: {ok}")
